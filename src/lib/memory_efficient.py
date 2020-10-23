@@ -198,6 +198,7 @@ def table_merge(tables: List[Path], output_path: Path, on: List[str], how: str =
 
 def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str]) -> None:
     print(f"merging on {on}")
+
     # We use records to store rows which have all columns present in `on`
     records = {}
 
@@ -205,11 +206,20 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
     partial_records = {}
 
     # The output header will be the "sum" of all columns across all tables
-    output_header = []
+    output_header = {}
 
     # Iterate over all the tables given
     for table in tables:
         print(f"merging {table}")
+        import sys
+
+        record_size = (
+            sys.getsizeof(records)
+            + sum(map(sys.getsizeof, records.values()))
+            + sum(map(sys.getsizeof, records.keys()))
+        )
+        print(f"Size of record: {record_size}")
+
         with open_file_like(table, mode="r") as fd:
             reader = csv.reader(fd)
             columns = {name: idx for idx, name in enumerate(next(reader))}
@@ -227,20 +237,26 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
             ), f"Columns {on} not present in {table}, found {list(columns.keys())}"
 
             # Keep adding new columns to the output header as we find them, respecting order
-            for col in columns.keys():
-                if col not in output_header:
-                    output_header.append(col)
+            for name in columns.keys():
+                if name not in output_header:
+                    output_header[name] = len(output_header)
+
+            # Use numbers instead of the string name for the columns to save memory
+            columns_map = {output_header[name]: idx for name, idx in columns.items()}
 
             # Save the record into memory
             # NOTE: This is not memory efficient, but it's time efficient
             for record in reader:
                 key = tuple([record[idx] if idx is not None else None for idx in join_indices])
                 merge_into[key] = merge_into.get(key, {})
-                merge_into[key].update({name: record[idx] for name, idx in columns.items()})
+                merge_into[key].update({name: record[idx] for name, idx in columns_map.items()})
+
+    # Compute a map to go back from number to column name
+    # columns_map = {idx: name for idx, name in output_header.items()}
 
     with open_file_like(output_path, mode="w") as fd:
         writer = csv.writer(fd)
-        writer.writerow(output_header)
+        writer.writerow(output_header.keys())
         for key, data in records.items():
             # Check to see if there are any partial records that should be merged
             for idx in range(len(on)):
@@ -248,7 +264,7 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
                 if partial_key in partial_records:
                     data.update(partial_records[partial_key])
 
-            writer.writerow([data.get(name) for name in output_header])
+            writer.writerow([data.get(name) for name in output_header.values()])
 
 
 def table_cross_product(left: Path, right: Path, output_path: Path) -> None:

@@ -30,10 +30,8 @@ from publish import (
     copy_tables,
     convert_tables_to_json,
     publish_global_tables,
-    import_tables_into_sqlite,
     merge_output_tables,
     merge_output_tables_fast,
-    merge_output_tables_sqlite,
 )
 
 # Make the main schema a global variable so we don't have to reload it in every test
