@@ -196,6 +196,61 @@ def table_merge(tables: List[Path], output_path: Path, on: List[str], how: str =
         table_join(temp_input, tables[-1], output_path=output_path, on=on, how=how)
 
 
+def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str]) -> None:
+    print(f"merging on {on}")
+    # We use records to store rows which have all columns present in `on`
+    records = {}
+
+    # We use partial_records to store rows which only have some of the columns from `on`
+    partial_records = {}
+
+    # The output header will be the "sum" of all columns across all tables
+    output_header = []
+
+    # Iterate over all the tables given
+    for table in tables:
+        print(f"merging {table}")
+        with open_file_like(table, mode="r") as fd:
+            reader = csv.reader(fd)
+            columns = {name: idx for idx, name in enumerate(next(reader))}
+
+            # Determine the indices used to merge, default to None for those not found
+            join_indices = [columns.get(name) for name in on]
+
+            # If all the indices are present, it's a full merge; otherwise it's a partial merge
+            full_merge = all(idx is not None for idx in join_indices)
+            merge_into = records if full_merge else partial_records
+
+            # Make sure there's at least one column we can merge on
+            assert (
+                len(join_indices) > 0
+            ), f"Columns {on} not present in {table}, found {list(columns.keys())}"
+
+            # Keep adding new columns to the output header as we find them, respecting order
+            for col in columns.keys():
+                if col not in output_header:
+                    output_header.append(col)
+
+            # Save the record into memory
+            # NOTE: This is not memory efficient, but it's time efficient
+            for record in reader:
+                key = tuple([record[idx] if idx is not None else None for idx in join_indices])
+                merge_into[key] = merge_into.get(key, {})
+                merge_into[key].update({name: record[idx] for name, idx in columns.items()})
+
+    with open_file_like(output_path, mode="w") as fd:
+        writer = csv.writer(fd)
+        writer.writerow(output_header)
+        for key, data in records.items():
+            # Check to see if there are any partial records that should be merged
+            for idx in range(len(on)):
+                partial_key = key[:idx] + (None,) + key[idx + 1 :]
+                if partial_key in partial_records:
+                    data.update(partial_records[partial_key])
+
+            writer.writerow([data.get(name) for name in output_header])
+
+
 def table_cross_product(left: Path, right: Path, output_path: Path) -> None:
     """
     Memory efficient method to perform the cross product of all columns in two tables. Columns

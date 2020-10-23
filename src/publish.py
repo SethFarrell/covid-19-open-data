@@ -40,6 +40,7 @@ from lib.memory_efficient import (
     table_read_column,
     table_rename,
     table_sort,
+    table_flex_outer_merge,
 )
 from lib.pipeline_tools import get_schema
 from lib.sql import (
@@ -230,76 +231,40 @@ def import_tables_into_sqlite(table_paths: List[Path], output_path: Path) -> Non
             )
 
 
-def merge_output_tables_sqlite(
+def merge_output_tables_fast(
     tables_folder: Path,
     output_path: Path,
-    sqlite_file: Path = None,
     drop_empty_columns: bool = False,
     use_table_names: List[str] = None,
 ) -> None:
-    """
-    Build a flat view of all tables combined, joined by <key> or <key, date>. This function
-    requires index.csv to be present under `tables_folder`.
-
-    Arguments:
-        table_paths: List of CSV files to join into a single table.
-        output_path: Output path for the resulting CSV file.
-        sqlite_path: Path for the SQLite database to use for importing data, defaults to a temporary
-            database on disk.
-        drop_empty_columns: Flag determining whether columns with null values only should be
-            removed from the output.
-    """
     # Default to a known list of tables to use when none is given
     table_paths = _get_tables_in_folder(tables_folder, use_table_names or V2_TABLE_LIST)
 
     # Use a temporary directory for intermediate files
     with temporary_directory() as workdir:
 
-        # Use two temporary tables as I/O for intermediate operations
-        temp_table_input, temp_table_output = "tmp_table_name_1", "tmp_table_name_2"
+        # Use temporary files to avoid computing everything in memory
+        temp_input = workdir / "tmp.1.csv"
+        temp_output = workdir / "tmp.2.csv"
 
         # Start with all combinations of <location key x date>
-        keys_and_dates_table_path = workdir / f"{temp_table_input}.csv"
-        _logger.log_info("Creating keys and dates table")
-        index_table = [table for table in table_paths if table.stem == "index"][0]
-        _make_location_key_and_date_table(index_table, keys_and_dates_table_path)
+        _make_location_key_and_date_table(tables_folder / "index.csv", temp_output)
+        location_key = get_table_columns(temp_output)[0]
+        temp_input, temp_output = temp_output, temp_input
 
-        # Create an SQLite database
-        _logger.log_info("Importing all tables into SQLite")
-        database_file = sqlite_file or workdir / "database.sqlite"
-        import_tables_into_sqlite([keys_and_dates_table_path] + table_paths, database_file)
+        table_flex_outer_merge([temp_input] + table_paths, temp_output, on=[location_key, "date"])
+        temp_input, temp_output = temp_output, temp_input
 
-        with create_sqlite_database(database_file) as conn:
+        # Drop rows with null date or without a single dated record
+        # TODO: figure out a memory-efficient way to do this
 
-            _logger.log_info(f"Merging all tables into a flat output")
-            for table in table_paths:
-                _logger.log_info(f"Merging {table.stem}")
+        # Remove columns which provide no data because they are only null values
+        if drop_empty_columns:
+            table_drop_nan_columns(temp_input, temp_output)
+            temp_input, temp_output = temp_output, temp_input
 
-                # Read the table's header to determine how to merge it
-                table_name = _safe_table_name(table.stem)
-                table_columns = get_table_columns(table)
-                join_on = [col for col in ("key", "location_key", "date") if col in table_columns]
-
-                # Join with the current intermediate table
-                sql_table_join(
-                    conn,
-                    left=temp_table_input,
-                    right=table_name,
-                    on=join_on,
-                    how="left outer",
-                    into_table=temp_table_output,
-                )
-
-                # Flip-flop the I/O tables to avoid a copy
-                temp_table_input, temp_table_output = temp_table_output, temp_table_input
-
-        sort_values = ("location_key", "date")
-        _logger.log_info(f"Exporting output as CSV")
-        sql_export_csv(conn, temp_table_input, output_path=output_path, sort_by=sort_values)
-
-        # Remove the intermediate tables from the SQLite database
-        sql_table_drop(conn, temp_table_input)
-        sql_table_drop(conn, temp_table_output)
+        # Ensure that the table is appropriately sorted and write to output location
+        table_sort(temp_input, output_path, sort_columns=[location_key, "date"])
 
 
 def create_table_subsets(main_table_path: Path, output_path: Path) -> Iterable[Path]:
@@ -470,7 +435,7 @@ def main(output_folder: Path, tables_folder: Path, use_table_names: List[str] = 
     main_file_zip_path = v3_folder / f"{main_file_name}.zip"
     with ZipFile(main_file_zip_path, mode="w", compression=ZIP_DEFLATED) as zip_archive:
         with zip_archive.open(main_file_name, "w") as output_file:
-            merge_output_tables_sqlite(
+            merge_output_tables_fast(
                 v3_folder, TextIOWrapper(output_file), use_table_names=use_table_names
             )
 
