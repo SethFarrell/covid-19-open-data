@@ -207,7 +207,7 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
     output_header = {}
 
     # Iterate over all the tables given
-    for table in pbar(tables, desc="Parsing tables"):
+    for table in pbar(tables, desc="Parsing tables", leave=False):
         with open_file_like(table, mode="r") as fd:
             reader = csv.reader(fd)
             columns = {name: idx for idx, name in enumerate(next(reader))}
@@ -242,7 +242,7 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
     with open_file_like(output_path, mode="w") as fd:
         writer = csv.writer(fd)
         writer.writerow(output_header.keys())
-        for key in pbar(records.keys(), total=len(records), desc="Writing records"):
+        for key in pbar(list(records.keys()), desc="Writing records", leave=False):
             # Remove record from memory while retrieving it
             data = records.pop(key)
 
