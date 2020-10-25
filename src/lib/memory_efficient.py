@@ -242,13 +242,18 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
     with open_file_like(output_path, mode="w") as fd:
         writer = csv.writer(fd)
         writer.writerow(output_header.keys())
-        for key, data in pbar(records.items(), total=len(records), desc="Writing records"):
+        for key in pbar(records.keys(), total=len(records), desc="Writing records"):
+            # Remove record from memory while retrieving it
+            data = records.pop(key)
+
             # Check to see if there are any partial records that should be merged
             for idx in range(len(on)):
                 partial_key = key[:idx] + (None,) + key[idx + 1 :]
                 if partial_key in partial_records:
+                    # We can modify the record, since they are only used once
                     data.update(partial_records[partial_key])
 
+            # Write the record to disk
             writer.writerow([data.get(name) for name in output_header.values()])
 
 
