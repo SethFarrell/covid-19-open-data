@@ -19,7 +19,7 @@ import warnings
 from pathlib import Path
 from typing import Dict, Iterable, List, TextIO
 
-from .io import line_reader, open_file_like, read_table, temporary_directory
+from .io import line_reader, open_file_like, pbar, read_table, temporary_directory
 
 
 # Any CSV file under 50 MB can use the fast JSON converter
@@ -197,8 +197,6 @@ def table_merge(tables: List[Path], output_path: Path, on: List[str], how: str =
 
 
 def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str]) -> None:
-    print(f"merging on {on}")
-
     # We use records to store rows which have all columns present in `on`
     records = {}
 
@@ -209,17 +207,7 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
     output_header = {}
 
     # Iterate over all the tables given
-    for table in tables:
-        print(f"merging {table}")
-        import sys
-
-        record_size = (
-            sys.getsizeof(records)
-            + sum(map(sys.getsizeof, records.values()))
-            + sum(map(sys.getsizeof, records.keys()))
-        )
-        print(f"Size of record: {record_size}")
-
+    for table in pbar(tables, desc="Parsing tables"):
         with open_file_like(table, mode="r") as fd:
             reader = csv.reader(fd)
             columns = {name: idx for idx, name in enumerate(next(reader))}
@@ -251,13 +239,10 @@ def table_flex_outer_merge(tables: List[Path], output_path: Path, on: List[str])
                 merge_into[key] = merge_into.get(key, {})
                 merge_into[key].update({name: record[idx] for name, idx in columns_map.items()})
 
-    # Compute a map to go back from number to column name
-    # columns_map = {idx: name for idx, name in output_header.items()}
-
     with open_file_like(output_path, mode="w") as fd:
         writer = csv.writer(fd)
         writer.writerow(output_header.keys())
-        for key, data in records.items():
+        for key, data in pbar(records.items(), total=len(records), desc="Writing records"):
             # Check to see if there are any partial records that should be merged
             for idx in range(len(on)):
                 partial_key = key[:idx] + (None,) + key[idx + 1 :]
