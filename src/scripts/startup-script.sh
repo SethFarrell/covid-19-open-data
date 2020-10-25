@@ -33,3 +33,9 @@ function read_metadata {
 
 # Delete ourselves after a two hour timeout
 $(sleep 7200 && self_destruct)&
+
+# Add 32GB of swap memory to our instance
+fallocate -l 32G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+mkswap /swapfile
