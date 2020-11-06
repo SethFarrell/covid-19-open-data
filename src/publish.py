@@ -25,7 +25,7 @@ from pstats import Stats
 from typing import Dict, Iterable, List, TextIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from lib.concurrent import thread_map
+from lib.concurrent import process_map
 from lib.constants import OUTPUT_COLUMN_ADAPTER, SRC, V2_TABLE_LIST, V3_TABLE_LIST
 from lib.error_logger import ErrorLogger
 from lib.io import pbar, read_lines, temporary_directory
@@ -319,7 +319,7 @@ def create_table_subsets(main_table_path: Path, output_path: Path) -> Iterable[P
 
     # Create a subset with the latest known day of data for each key
     map_func = subset_latest
-    yield from thread_map(map_func, [*output_path.glob("*.csv")], desc="Latest subset")
+    yield from process_map(map_func, [*output_path.glob("*.csv")], desc="Latest subset")
 
     # Create subsets with each known key
     yield from _subset_grouped_key(main_table_path, output_path, desc="Grouped key subsets")
@@ -345,7 +345,7 @@ def convert_tables_to_json(csv_folder: Path, output_folder: Path) -> Iterable[Pa
     # Convert all CSV files to JSON using values format
     map_iter = list(csv_folder.glob("**/*.csv"))
     map_func = partial(try_json_covert, get_schema())
-    for json_output in thread_map(map_func, map_iter, max_workers=2, desc="JSON conversion"):
+    for json_output in process_map(map_func, map_iter, max_workers=2, desc="JSON conversion"):
         if json_output is not None:
             yield json_output
 
@@ -396,7 +396,7 @@ def publish_location_aggregates(
             use_table_names=use_table_names,
         )
 
-    list(thread_map(map_func, list(location_keys), desc="Creating location subsets"))
+    list(process_map(map_func, list(location_keys), desc="Creating location subsets"))
 
 
 def publish_global_tables(
